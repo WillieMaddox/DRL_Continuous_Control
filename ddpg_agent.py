@@ -10,14 +10,14 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 128         # minibatch size
+BATCH_SIZE = 128        # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 2e-4         # learning rate of the actor
-LR_CRITIC = 2e-4        # learning rate of the critic
-WEIGHT_DECAY = 0 # 0.0001   # L2 weight decay
-UPDATE_EVERY = 2       # how often to update the network
-NUM_BATCHES = 1 # 20
+LR_ACTOR = 2e-4         # Learning rate of the actor
+LR_CRITIC = 2e-4        # Learning rate of the critic
+WEIGHT_DECAY = 0        # L2 weight decay
+UPDATE_EVERY = 2        # Update the network after this many steps.
+NUM_BATCHES = 1         # Roll out this many batches when training.
 
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = "cpu"
@@ -137,7 +137,13 @@ class Agent:
         self.soft_update(self.actor_local, self.actor_target, self.tau)
 
     def hard_copy_weights(self, local_model, target_model):
-        """ copy weights from local_model to target_model network (part of initialization)"""
+        """ copy weights from local_model to target_model network (part of initialization)
+
+        Params
+        ======
+            local_model: PyTorch model (weights will be copied from)
+            target_model: PyTorch model (weights will be copied to)
+        """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(local_param.data)
 
@@ -184,6 +190,7 @@ class ReplayBuffer:
 
     def __init__(self, action_size, buffer_size, batch_size, seed):
         """Initialize a ReplayBuffer object.
+
         Params
         ======
             buffer_size (int): maximum size of buffer
@@ -226,13 +233,13 @@ def ddpg(agent, n_episodes=2000, t_max=1000, print_every=100):
         t_max (int): maximum number of timesteps per episode
         print_every (int): print after this many episodes. Also used to define length of the deque buffer.
     """
-    scores2 = []  # list containing scores from each episode
-    scores2_window = deque(maxlen=print_every)  # last 100 scores
+    scores = []  # list containing scores from each episode
+    scores_window = deque(maxlen=print_every)  # last 100 scores
     for i_episode in range(1, n_episodes + 1):
         env_info = env.reset(train_mode=True)[brain_name]  # reset the environment
         states = env_info.vector_observations  # get the current state (for each agent)
         agent.reset()
-        scores = np.zeros(num_agents)  # initialize the score (for each agent)
+        episode_scores = np.zeros(num_agents)  # initialize the score (for each agent)
         t_step = 0
         while True:
 
@@ -246,36 +253,35 @@ def ddpg(agent, n_episodes=2000, t_max=1000, print_every=100):
             agent.step(states, actions, rewards, states_next, dones)  # agent executes a step and learns
 
             states = states_next  # roll over states to next time step
-            scores += rewards  # update the score (for each agent)
+            episode_scores += rewards  # update the score (for each agent)
 
             if np.any(dones):  # exit loop if episode finished
                 break
 
             t_step += 1  # increment the number of steps seen this episode.
             if t_step >= t_max:  # exit loop if episode finished
-                # scores = scores * 300.0 / t_step
+                episode_scores = episode_scores * 1000.0 / t_step
                 break
 
-        scores2.append(np.mean(scores))
-        scores2_window.append(np.mean(scores))  # save most recent score
-        print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores2_window)), end="")
+        scores.append(np.mean(episode_scores))
+        scores_window.append(np.mean(episode_scores))  # save most recent score
+        print('\rEpisode {}\tCurrent Score: {:.2f}\tAverage Score: {:.2f}'.format(i_episode, scores[-1], np.mean(scores_window)), end="")
         if i_episode % print_every == 0:
-            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores2_window)))
+            print('\rEpisode {}\tCurrent Score: {:.2f}\tAverage Score: {:.2f}'.format(i_episode, scores[-1], np.mean(scores_window)))
             torch.save(agent.actor_local.state_dict(), 'checkpoint_actor.pth')
             torch.save(agent.critic_local.state_dict(), 'checkpoint_critic.pth')
 
-        if np.mean(scores2_window) >= 30.0:
-            print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}'.format(i_episode - 100,
-                                                                                         np.mean(scores2_window)))
+        if np.mean(scores_window) >= 30.0:
+            print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
             torch.save(agent.actor_local.state_dict(), 'checkpoint_actor.pth')
             torch.save(agent.critic_local.state_dict(), 'checkpoint_critic.pth')
             break
-    return scores2
+    return scores
 
 
 if __name__ == '__main__':
     import time
-    # import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
     from unityagents import UnityEnvironment
 
     env = UnityEnvironment(file_name='Reacher_Linux_NoVis/Reacher.x86_64')
@@ -303,5 +309,14 @@ if __name__ == '__main__':
     agent = Agent(state_size=state_size, action_size=action_size, num_agents=num_agents, random_seed=0)
 
     t0 = time.time()
-    scores = ddpg(agent, n_episodes=2000, t_max=200)
+    scores = ddpg(agent, n_episodes=2000, t_max=1000)
     print(time.time() - t0, 'seconds')
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    plt.plot(np.arange(1, len(scores) + 1), scores)
+    plt.ylabel('Score')
+    plt.xlabel('Episode #')
+    plt.show()
+
+    env.close()
